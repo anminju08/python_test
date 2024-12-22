@@ -1,61 +1,68 @@
-#main.py
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
+import requests
 import pandas as pd
-import random
 
 app = FastAPI()
 
-# 1. 가짜 날씨 데이터 생성
-def generate_fake_weather_data():
-    cities = ["서울", "부산", "대구", "인천", "광주", "대전", "울산", "수원"]
-    weather_conditions = ["맑음", "구름 많음", "비", "눈", "흐림", "바람"]
-
-    data = []
-    for city in cities:
-        temperature = round(random.uniform(-5, 35), 1)  # -5도에서 35도 사이
-        humidity = random.randint(30, 90)  # 30%에서 90% 사이
-        condition = random.choice(weather_conditions)
-
-        # Python 3.10의 구조적 패턴 매칭을 사용하여 날씨 상태 분류
-        match condition:
-            case "맑음":
-                icon = "☀️"
-            case "구름 많음":
-                icon = "☁️"
-            case "비":
-                icon = "🌧️"
-            case "눈":
-                icon = "❄️"
-            case "흐림":
-                icon = "🌥️"
-            case "바람":
-                icon = "💨"
-            case _:
-                icon = "❓"
-
-        data.append({
-            "도시": city,
-            "온도 (°C)": temperature,
-            "습도 (%)": humidity,
-            "날씨": f"{condition} {icon}" 
-        })
-
-    return pd.DataFrame(data)
-
-# 2. FastAPI 엔드포인트
-@app.get("/", response_class=HTMLResponse)
-async def show_weather():
-    df = generate_fake_weather_data()
+def fetch_air_quality_data():
+    API_KEY = "ldsUnAd0IgYlk%2FQbU7ax9Sw9G3h0d3Cn2gTWiwnfwC2F8u6BplOoG2f%2FDLqvR7DM7QBVL%2B82rOS%2Fx%2B2u2EhOPA%3D%3D"
+    SERVICE_URL = "http://apis.data.go.kr/B552584/UlfptcaAlarmInqireSvc/getCtprvnRltmMesureDnsty"
     
-    # HTML 테이블로 변환
+    params = {
+        "serviceKey": API_KEY,
+        "returnType": "json",
+        "numOfRows": 10,  
+        "pageNo": 1,
+        "sidoName": "서울", 
+        "ver": "1.0"
+    }
+    
+    response = requests.get(SERVICE_URL, params=params)
+    if response.status_code == 200:
+        data = response.json()
+        if "response" in data and "body" in data["response"]:
+            items = data["response"]["body"]["items"]
+            return items
+    return []
+
+def interpret_khai_grade(grade):
+    grade_dict = {
+        "1": "좋음",
+        "2": "보통",
+        "3": "나쁨",
+        "4": "매우 나쁨"
+    }
+    return grade_dict.get(str(grade), "N/A")
+
+def process_air_quality_data():
+    data = fetch_air_quality_data()
+    if not data:
+        return pd.DataFrame()
+    
+    processed_data = []
+    for item in data:
+        processed_data.append({
+            "측정소": item.get("stationName", "알 수 없음"),
+            "PM10 (미세먼지)": item.get("pm10Value", "N/A"),
+            "PM2.5 (초미세먼지)": item.get("pm25Value", "N/A"),
+            "상태": interpret_khai_grade(item.get("khaiGrade"))
+        })
+    
+    return pd.DataFrame(processed_data)
+
+@app.get("/", response_class=HTMLResponse)
+async def show_air_quality():
+    df = process_air_quality_data()
+    if df.empty:
+        return HTMLResponse(content="<h1>데이터를 가져올 수 없습니다.</h1>", status_code=200)
+
     table_html = df.to_html(index=False, escape=False, justify="center", border=1)
 
-    # HTML 페이지 생성
     html_content = f"""
     <html>
         <head>
-            <title>대한민국 주요 도시 날씨</title>
+            <title>지역별 미세먼지 정보</title>
             <style>
                 body {{ font-family: Arial, sans-serif; text-align: center; }}
                 table {{ margin: 0 auto; border-collapse: collapse; width: 80%; }}
@@ -64,7 +71,7 @@ async def show_weather():
             </style>
         </head>
         <body>
-            <h1>대한민국 주요 도시 날씨 정보</h1>
+            <h1>지역별 미세먼지 정보</h1>
             {table_html}
         </body>
     </html>
